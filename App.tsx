@@ -8,6 +8,7 @@ import { SessionStatus, TranscriptItem, UserProgress } from './types';
 const PROGRESS_KEY = 'salut_french_progress_v1';
 const MAX_RETRIES = 3;
 const RETRY_DELAY_BASE = 2000;
+const OUTPUT_GAIN_VALUE = 3.0; // High gain for mobile devices
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<SessionStatus>(SessionStatus.IDLE);
@@ -26,6 +27,7 @@ const App: React.FC = () => {
   const sessionRef = useRef<any>(null);
   const audioContextInRef = useRef<AudioContext | null>(null);
   const audioContextOutRef = useRef<AudioContext | null>(null);
+  const gainNodeOutRef = useRef<GainNode | null>(null);
   const nextStartTimeRef = useRef<number>(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const micStreamRef = useRef<MediaStream | null>(null);
@@ -63,6 +65,7 @@ const App: React.FC = () => {
       audioContextOutRef.current.close().catch(() => {});
       audioContextOutRef.current = null;
     }
+    gainNodeOutRef.current = null;
     sourcesRef.current.forEach(source => {
       try { source.stop(); } catch(e) {}
     });
@@ -105,9 +108,18 @@ const App: React.FC = () => {
       audioContextInRef.current = inCtx;
       audioContextOutRef.current = outCtx;
 
-      // Crucial: AudioContexts start in suspended state in many browsers
-      if (outCtx.state === 'suspended') await outCtx.resume();
-      if (inCtx.state === 'suspended') await inCtx.resume();
+      // Create GainNode to boost output volume
+      const gainNode = outCtx.createGain();
+      gainNode.gain.value = OUTPUT_GAIN_VALUE;
+      gainNode.connect(outCtx.destination);
+      gainNodeOutRef.current = gainNode;
+
+      // Aggressive resumption for mobile
+      const resumeAudio = async () => {
+        if (outCtx.state === 'suspended') await outCtx.resume();
+        if (inCtx.state === 'suspended') await inCtx.resume();
+      };
+      await resumeAudio();
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       micStreamRef.current = stream;
@@ -147,7 +159,6 @@ Sempre use português para instruções e francês para o ensino.`,
             retryCountRef.current = 0; 
             isRetryingRef.current = false;
             
-            // Start microphone streaming
             const source = inCtx.createMediaStreamSource(stream);
             const scriptProcessor = inCtx.createScriptProcessor(4096, 1, 1);
             scriptProcessorRef.current = scriptProcessor;
@@ -165,36 +176,39 @@ Sempre use português para instruções e francês para o ensino.`,
             source.connect(scriptProcessor);
             scriptProcessor.connect(inCtx.destination);
 
-            // Poke the model to start speaking if it hasn't already
             sessionPromise.then(session => {
               session.sendRealtimeInput({ text: "Bonjour Pierre, estou pronto para começar a aula." });
             });
           },
           onmessage: async (message) => {
-            // Handle Audio Data
             const parts = message.serverContent?.modelTurn?.parts;
-            if (parts && audioContextOutRef.current) {
+            if (parts && audioContextOutRef.current && gainNodeOutRef.current) {
               const ctx = audioContextOutRef.current;
+              const gain = gainNodeOutRef.current;
               
               for (const part of parts) {
                 if (part.inlineData) {
                   const base64Audio = part.inlineData.data;
                   if (!base64Audio) continue;
 
-                  // Double check context state
                   if (ctx.state === 'suspended') await ctx.resume();
 
                   const audioBuffer = await decodeAudioData(decode(base64Audio), ctx, 24000, 1);
                   const source = ctx.createBufferSource();
                   source.buffer = audioBuffer;
-                  source.connect(ctx.destination);
                   
-                  // Track source for potential interruption
+                  // Connect to GainNode instead of direct destination
+                  source.connect(gain);
+                  
                   sourcesRef.current.add(source);
                   source.addEventListener('ended', () => sourcesRef.current.delete(source));
 
-                  // Schedule playback
-                  nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
+                  // Improved scheduling for mobile
+                  const now = ctx.currentTime;
+                  if (nextStartTimeRef.current < now) {
+                    nextStartTimeRef.current = now + 0.05; // Small buffer
+                  }
+                  
                   source.start(nextStartTimeRef.current);
                   nextStartTimeRef.current += audioBuffer.duration;
                 }
@@ -340,7 +354,7 @@ Sempre use português para instruções e francês para o ensino.`,
               </div>
               <h2 className="text-3xl font-black text-slate-800">C'est parti!</h2>
               <p className="text-slate-500 max-w-sm leading-relaxed">
-                Pratique sua pronúncia agora com o tutor Pierre. O som deve começar assim que conectarmos.
+                Pratique sua pronúncia agora com o tutor Pierre. O volume foi otimizado para dispositivos móveis.
               </p>
             </div>
 
