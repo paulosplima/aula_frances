@@ -2,6 +2,7 @@
   "name": "Salut! French Tutor",
   "description": "An interactive French language learning app that uses the Gemini Live API to practice pronunciation and conversation in real-time.",
   "requestFramePermissions": [
-    "microphone"
+    "microphone",
+    "camera"
   ]
 }

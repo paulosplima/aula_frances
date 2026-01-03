@@ -18,4 +18,5 @@ export interface UserProgress {
   currentLevel: 'Iniciante' | 'Intermediário' | 'Avançado';
   lastLessonDate: string | null;
   masteredTopics: string[];
+  userAvatar?: string; // Base64 image
 }
