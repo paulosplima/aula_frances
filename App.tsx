@@ -6,7 +6,8 @@ import { decode, decodeAudioData, createPcmBlob } from './utils/audioUtils';
 import { SessionStatus, TranscriptItem, UserProgress } from './types';
 
 const PROGRESS_KEY = 'salut_french_progress_v1';
-const MAX_RETRIES = 2;
+const MAX_RETRIES = 3;
+const RETRY_DELAY_BASE = 2000;
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<SessionStatus>(SessionStatus.IDLE);
@@ -22,7 +23,6 @@ const App: React.FC = () => {
     };
   });
   
-  // Refs for audio and session management
   const sessionRef = useRef<any>(null);
   const audioContextInRef = useRef<AudioContext | null>(null);
   const audioContextOutRef = useRef<AudioContext | null>(null);
@@ -31,22 +31,20 @@ const App: React.FC = () => {
   const micStreamRef = useRef<MediaStream | null>(null);
   const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const retryCountRef = useRef(0);
+  const isRetryingRef = useRef(false);
 
   const currentInputTranscription = useRef('');
   const currentOutputTranscription = useRef('');
 
-  // Persist progress when it changes
   useEffect(() => {
     localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress));
   }, [progress]);
 
-  const stopSession = useCallback(() => {
+  const stopSession = useCallback((updateProgress = true) => {
+    isRetryingRef.current = false;
+    
     if (sessionRef.current) {
-      try {
-        sessionRef.current.close?.();
-      } catch (e) {
-        console.warn('Error closing session:', e);
-      }
+      try { sessionRef.current.close?.(); } catch (e) {}
       sessionRef.current = null;
     }
     if (micStreamRef.current) {
@@ -58,11 +56,11 @@ const App: React.FC = () => {
       scriptProcessorRef.current = null;
     }
     if (audioContextInRef.current) {
-      audioContextInRef.current.close().catch(console.error);
+      audioContextInRef.current.close().catch(() => {});
       audioContextInRef.current = null;
     }
     if (audioContextOutRef.current) {
-      audioContextOutRef.current.close().catch(console.error);
+      audioContextOutRef.current.close().catch(() => {});
       audioContextOutRef.current = null;
     }
     sourcesRef.current.forEach(source => {
@@ -71,8 +69,7 @@ const App: React.FC = () => {
     sourcesRef.current.clear();
     nextStartTimeRef.current = 0;
 
-    // Update progress on session end if it was a successful session
-    if (status === SessionStatus.CONNECTED) {
+    if (updateProgress && status === SessionStatus.CONNECTED) {
       setProgress(prev => {
         const newCount = prev.sessionsCompleted + 1;
         let newLevel = prev.currentLevel;
@@ -94,24 +91,24 @@ const App: React.FC = () => {
   const startSession = async (retry: boolean = false) => {
     if (!retry) {
       retryCountRef.current = 0;
+      isRetryingRef.current = false;
     }
 
     try {
       setStatus(SessionStatus.CONNECTING);
       setError(null);
 
-      // Initialization of Google GenAI client
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
       
-      // Setup Audio Contexts
-      audioContextInRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      audioContextOutRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      const inCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      const outCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      audioContextInRef.current = inCtx;
+      audioContextOutRef.current = outCtx;
 
-      if (audioContextOutRef.current.state === 'suspended') {
-        await audioContextOutRef.current.resume();
-      }
+      // Crucial: AudioContexts start in suspended state in many browsers
+      if (outCtx.state === 'suspended') await outCtx.resume();
+      if (inCtx.state === 'suspended') await inCtx.resume();
 
-      // Get Microphone
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       micStreamRef.current = stream;
 
@@ -122,7 +119,7 @@ const App: React.FC = () => {
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
           },
-          systemInstruction: `Você é um professor de francês dedicado e carismático. 
+          systemInstruction: `Você é um professor de francês dedicado e carismático chamado Pierre. 
 
 PERFIL DO ALUNO:
 - Nível Atual: ${progress.currentLevel}
@@ -130,64 +127,82 @@ PERFIL DO ALUNO:
 - Última aula: ${progress.lastLessonDate || 'Esta é a primeira aula!'}
 
 OBJETIVO DA SESSÃO: 
-Você DEVE iniciar a aula se apresentando IMEDIATAMENTE (ex: "Bonjour! Sou seu tutor de francês. Como esta é nossa aula número ${progress.sessionsCompleted + 1}, vamos focar em conversação prática!").
-Mantenha a conversa dinâmica.
+Apresente-se IMEDIATAMENTE e comece a aula. Não espere o usuário falar.
+Se for a primeira aula, seja acolhedor. Se for recorrente, diga "Bem-vindo de volta para nossa aula ${progress.sessionsCompleted + 1}".
 
 FLUXO DA AULA:
-1. Comece com uma saudação e uma frase curta em francês.
-2. Traduza para o português.
-3. Peça para o aluno repetir a frase em francês.
-4. Escute o aluno e avalie a pronúncia com carinho, dando dicas técnicas de fonética.
-5. Avance para temas mais complexos se o aluno estiver indo bem.
+1. Saudação inicial e introdução de uma frase curta em francês.
+2. Tradução para português.
+3. Pedido para o aluno repetir.
+4. Feedback de pronúncia e incentivo.
 
-Sempre use português para dar instruções e feedback, e francês para o conteúdo de ensino.`,
+Sempre use português para instruções e francês para o ensino.`,
           outputAudioTranscription: {},
           inputAudioTranscription: {},
         },
         callbacks: {
           onopen: () => {
+            console.log('Session connection opened');
             setStatus(SessionStatus.CONNECTED);
-            retryCountRef.current = 0; // Reset retries on success
+            retryCountRef.current = 0; 
+            isRetryingRef.current = false;
             
-            const source = audioContextInRef.current!.createMediaStreamSource(stream);
-            const scriptProcessor = audioContextInRef.current!.createScriptProcessor(4096, 1, 1);
+            // Start microphone streaming
+            const source = inCtx.createMediaStreamSource(stream);
+            const scriptProcessor = inCtx.createScriptProcessor(4096, 1, 1);
             scriptProcessorRef.current = scriptProcessor;
 
             scriptProcessor.onaudioprocess = (e) => {
               const inputData = e.inputBuffer.getChannelData(0);
               const pcmBlob = createPcmBlob(inputData);
               sessionPromise.then(session => {
-                if (session) session.sendRealtimeInput({ media: pcmBlob });
+                if (session && status === SessionStatus.CONNECTED) {
+                  session.sendRealtimeInput({ media: pcmBlob });
+                }
               }).catch(() => {});
             };
 
             source.connect(scriptProcessor);
-            scriptProcessor.connect(audioContextInRef.current!.destination);
+            scriptProcessor.connect(inCtx.destination);
+
+            // Poke the model to start speaking if it hasn't already
+            sessionPromise.then(session => {
+              session.sendRealtimeInput({ text: "Bonjour Pierre, estou pronto para começar a aula." });
+            });
           },
           onmessage: async (message) => {
-            const audioParts = message.serverContent?.modelTurn?.parts?.filter(p => p.inlineData);
-            if (audioParts && audioParts.length > 0 && audioContextOutRef.current) {
+            // Handle Audio Data
+            const parts = message.serverContent?.modelTurn?.parts;
+            if (parts && audioContextOutRef.current) {
               const ctx = audioContextOutRef.current;
-              for (const part of audioParts) {
-                const base64Audio = part.inlineData?.data;
-                if (!base64Audio) continue;
-                if (ctx.state === 'suspended') await ctx.resume();
-                nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
-                const audioBuffer = await decodeAudioData(decode(base64Audio), ctx, 24000, 1);
-                const source = ctx.createBufferSource();
-                source.buffer = audioBuffer;
-                source.connect(ctx.destination);
-                source.addEventListener('ended', () => sourcesRef.current.delete(source));
-                source.start(nextStartTimeRef.current);
-                nextStartTimeRef.current += audioBuffer.duration;
-                sourcesRef.current.add(source);
+              
+              for (const part of parts) {
+                if (part.inlineData) {
+                  const base64Audio = part.inlineData.data;
+                  if (!base64Audio) continue;
+
+                  // Double check context state
+                  if (ctx.state === 'suspended') await ctx.resume();
+
+                  const audioBuffer = await decodeAudioData(decode(base64Audio), ctx, 24000, 1);
+                  const source = ctx.createBufferSource();
+                  source.buffer = audioBuffer;
+                  source.connect(ctx.destination);
+                  
+                  // Track source for potential interruption
+                  sourcesRef.current.add(source);
+                  source.addEventListener('ended', () => sourcesRef.current.delete(source));
+
+                  // Schedule playback
+                  nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
+                  source.start(nextStartTimeRef.current);
+                  nextStartTimeRef.current += audioBuffer.duration;
+                }
               }
             }
 
             if (message.serverContent?.interrupted) {
-              sourcesRef.current.forEach(s => {
-                try { s.stop(); } catch(e) {}
-              });
+              sourcesRef.current.forEach(s => { try { s.stop(); } catch(e) {} });
               sourcesRef.current.clear();
               nextStartTimeRef.current = 0;
             }
@@ -212,37 +227,44 @@ Sempre use português para dar instruções e feedback, e francês para o conte�
               currentOutputTranscription.current = '';
             }
           },
-          onerror: (e) => {
-            console.error('Session Error:', e);
-            if (retryCountRef.current < MAX_RETRIES) {
+          onerror: (e: any) => {
+            console.error('Gemini Live API Error:', e);
+            const errorMsg = e?.message || '';
+            const isRetryable = errorMsg.toLowerCase().includes('internal') || 
+                                errorMsg.toLowerCase().includes('cancelled') ||
+                                errorMsg.toLowerCase().includes('unavailable');
+
+            if (isRetryable && retryCountRef.current < MAX_RETRIES && !isRetryingRef.current) {
+              isRetryingRef.current = true;
               retryCountRef.current++;
-              console.log(`Retrying connection... (${retryCountRef.current}/${MAX_RETRIES})`);
-              setTimeout(() => startSession(true), 1500 * retryCountRef.current);
-            } else {
-              setError('O serviço está temporariamente indisponível. Por favor, tente novamente em alguns instantes.');
-              stopSession();
+              stopSession(false);
+              const delay = RETRY_DELAY_BASE * Math.pow(2, retryCountRef.current - 1);
+              setTimeout(() => startSession(true), delay);
+            } else if (!isRetryingRef.current) {
+              setError('Conexão instável. Por favor, reinicie a aula.');
+              stopSession(false);
             }
           },
           onclose: () => {
-            if (status !== SessionStatus.CONNECTING) stopSession();
+            if (!isRetryingRef.current && status === SessionStatus.CONNECTED) stopSession();
           }
         }
       });
       sessionRef.current = await sessionPromise;
     } catch (err: any) {
-      console.error('Failed to start session:', err);
+      console.error('Session Start Failure:', err);
       if (retryCountRef.current < MAX_RETRIES) {
         retryCountRef.current++;
-        setTimeout(() => startSession(true), 2000);
+        setTimeout(() => startSession(true), RETRY_DELAY_BASE);
       } else {
-        setError('Não foi possível conectar ao professor. Verifique sua internet ou tente mais tarde.');
+        setError('Falha ao conectar. Verifique seu microfone e conexão.');
         setStatus(SessionStatus.ERROR);
       }
     }
   };
 
   const resetProgress = () => {
-    if (confirm('Deseja realmente reiniciar todo o seu progresso?')) {
+    if (confirm('Deseja reiniciar seu progresso?')) {
       setProgress({
         sessionsCompleted: 0,
         currentLevel: 'Iniciante',
@@ -316,9 +338,9 @@ Sempre use português para dar instruções e feedback, e francês para o conte�
                   <Headphones size={56} className="text-blue-600" />
                 </div>
               </div>
-              <h2 className="text-3xl font-black text-slate-800">Prêt para aprender?</h2>
+              <h2 className="text-3xl font-black text-slate-800">C'est parti!</h2>
               <p className="text-slate-500 max-w-sm leading-relaxed">
-                Seu professor de francês está esperando. Vamos praticar sua pronúncia e conversação em tempo real.
+                Pratique sua pronúncia agora com o tutor Pierre. O som deve começar assim que conectarmos.
               </p>
             </div>
 
@@ -344,7 +366,7 @@ Sempre use português para dar instruções e feedback, e francês para o conte�
                   {item.text}
                 </div>
                 <span className="text-[10px] text-slate-400 mt-1.5 font-black uppercase tracking-widest px-1">
-                  {item.role === 'user' ? 'Você' : 'Professor'}
+                  {item.role === 'user' ? 'Você' : 'Pierre'}
                 </span>
               </div>
             ))}
@@ -355,7 +377,9 @@ Sempre use português para dar instruções e feedback, e francês para o conte�
                   <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce [animation-delay:-.3s]"></div>
                   <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce [animation-delay:-.5s]"></div>
                 </div>
-                <p className="text-sm text-slate-500 font-bold uppercase tracking-wider">Conectando com o professor...</p>
+                <p className="text-sm text-slate-500 font-bold uppercase tracking-wider">
+                  Pierre está se preparando...
+                </p>
               </div>
             )}
             <div id="anchor"></div>
@@ -366,7 +390,7 @@ Sempre use português para dar instruções e feedback, e francês para o conte�
           <div className="bg-red-50 border border-red-100 p-5 rounded-3xl flex items-start gap-4 text-red-600 mx-2 animate-in fade-in slide-in-from-bottom-2 shadow-sm">
             <AlertCircle className="mt-0.5 flex-shrink-0" size={20} />
             <div className="flex-1">
-              <p className="text-sm font-black uppercase tracking-tight mb-1">Ops! Algo deu errado</p>
+              <p className="text-sm font-black uppercase tracking-tight mb-1">Ops! Erro de Conexão</p>
               <p className="text-sm font-medium opacity-80">{error}</p>
               <button 
                 onClick={() => startSession()}
@@ -386,9 +410,9 @@ Sempre use português para dar instruções e feedback, e francês para o conte�
                <Volume2 size={24} />
              </div>
              <div>
-               <div className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Microfone</div>
+               <div className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Áudio</div>
                <div className="text-sm font-bold text-slate-600">
-                 {status === SessionStatus.CONNECTED ? 'Ouvindo...' : 'Inativo'}
+                 {status === SessionStatus.CONNECTED ? 'Pierre falando...' : 'Mudo'}
                </div>
              </div>
           </div>
@@ -404,7 +428,7 @@ Sempre use português para dar instruções e feedback, e francês para o conte�
             ) : (
               <div className="flex flex-col items-center">
                 <button
-                  onClick={stopSession}
+                  onClick={() => stopSession()}
                   className="bg-red-500 hover:bg-red-600 text-white p-6 rounded-full shadow-2xl shadow-red-100 transition-all active:scale-90 relative z-10"
                 >
                   <MicOff size={32} />
@@ -416,7 +440,7 @@ Sempre use português para dar instruções e feedback, e francês para o conte�
           </div>
 
           <div className="hidden sm:flex flex-col items-end">
-             <div className="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-1.5">Progresso</div>
+             <div className="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-1.5">Nível</div>
              <div className="flex gap-1.5">
                 {[1,2,3,4,5].map(i => (
                   <div key={i} className={`w-5 h-1.5 rounded-full transition-all duration-500 ${i <= (progress.sessionsCompleted % 5 || (progress.sessionsCompleted > 0 ? 5 : 0)) ? 'bg-blue-500' : 'bg-slate-100'}`}></div>
@@ -425,15 +449,6 @@ Sempre use português para dar instruções e feedback, e francês para o conte�
           </div>
         </div>
       </div>
-
-      <style>{`
-        .scrollbar-hide::-webkit-scrollbar { display: none; }
-        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-        @keyframes bounce-slow {
-          0%, 100% { transform: translateY(-5%); }
-          50% { transform: translateY(0); }
-        }
-      `}</style>
     </div>
   );
 };
