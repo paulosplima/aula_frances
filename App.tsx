@@ -168,16 +168,25 @@ const App: React.FC = () => {
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef<any>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress));
   }, [progress]);
 
-  useEffect(() => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTo({ top: scrollContainerRef.current.scrollHeight, behavior: 'smooth' });
+  // Robust auto-scrolling logic
+  const scrollToBottom = useCallback(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
-  }, [transcript]);
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+    // Re-scroll after a short delay to account for layout shifts/animations
+    const timer = setTimeout(scrollToBottom, 100);
+    return () => clearTimeout(timer);
+  }, [transcript, scrollToBottom, status]);
 
   const addTranscriptItem = useCallback((role: 'user' | 'model', text: string) => {
     setTranscript(prev => [...prev, {
@@ -339,9 +348,9 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col items-center justify-start relative px-4 pt-4">
+      <main className="flex-1 flex flex-col items-center justify-start relative px-4 pt-4 overflow-hidden">
         {/* Pierre at the absolute top (relative to main) */}
-        <div className="w-full max-w-sm animate-in slide-in-from-top-10 duration-700">
+        <div className="w-full max-w-sm animate-in slide-in-from-top-10 duration-700 z-20">
           <PierreAvatar 
             isSpeaking={isSpeaking} 
             isListening={status === SessionStatus.CONNECTED && !isSpeaking} 
@@ -350,7 +359,7 @@ const App: React.FC = () => {
         </div>
 
         {/* Content Area */}
-        <div className="w-full max-w-2xl flex-1 flex flex-col gap-4 mt-[-40px]">
+        <div className="w-full max-w-2xl flex-1 flex flex-col gap-4 mt-[-40px] relative overflow-hidden">
           {status === SessionStatus.IDLE && transcript.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-center gap-6 animate-in fade-in zoom-in-95">
               <h2 className="text-3xl font-black text-white leading-tight">Prêt pour votre cours?</h2>
@@ -365,7 +374,7 @@ const App: React.FC = () => {
           ) : (
             <div 
               ref={scrollContainerRef}
-              className="flex-1 overflow-y-auto px-2 space-y-6 pb-24 scrollbar-hide mask-fade-bottom"
+              className="flex-1 overflow-y-auto px-2 space-y-6 pb-32 pt-8 scrollbar-hide mask-fade-top"
             >
               {transcript.map((item) => (
                 <div key={item.id} className={`flex flex-col ${item.role === 'user' ? 'items-end' : 'items-start'} animate-in slide-in-from-bottom-4 duration-500`}>
@@ -384,6 +393,8 @@ const App: React.FC = () => {
                   <span className="font-bold uppercase tracking-widest text-xs">Bonjour Pierre...</span>
                 </div>
               )}
+              {/* Anchor for auto-scrolling */}
+              <div ref={messagesEndRef} className="h-4 w-full" />
             </div>
           )}
         </div>
@@ -402,7 +413,7 @@ const App: React.FC = () => {
         <div className="fixed bottom-8 left-0 right-0 flex justify-center px-8 z-50 pointer-events-none">
           <button
             onClick={handleStop}
-            className="pointer-events-auto bg-red-600/90 hover:bg-red-500 text-white p-6 rounded-full shadow-[0_15px_30px_rgba(220,38,38,0.4)] transition-all active:scale-90 group"
+            className="pointer-events-auto bg-red-600/90 hover:bg-red-500 text-white p-6 rounded-full shadow-[0_15px_30px_rgba(220,38,38,0.4)] transition-all active:scale-90 group border border-white/10 backdrop-blur-md"
           >
             <MicOff size={32} />
           </button>
@@ -411,8 +422,8 @@ const App: React.FC = () => {
 
       <style>{`
         .scrollbar-hide::-webkit-scrollbar { display: none; }
-        .mask-fade-bottom {
-          mask-image: linear-gradient(to bottom, black 85%, transparent 100%);
+        .mask-fade-top {
+          mask-image: linear-gradient(to top, black 85%, transparent 100%);
         }
       `}</style>
     </div>
