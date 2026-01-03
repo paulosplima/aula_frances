@@ -77,8 +77,7 @@ const PierreAvatar: React.FC<{
   ];
 
   return (
-    <div className="relative w-full max-w-sm h-48 mx-auto flex items-start justify-center overflow-visible">
-      {/* Glow de fundo removido (bola azul) como solicitado */}
+    <div className="relative w-full max-w-sm h-32 mx-auto flex items-start justify-center overflow-visible">
       <div className={`relative z-10 w-full h-full transition-all duration-700 ${isSpeaking ? 'scale-110' : 'scale-100'}`}>
         <svg viewBox="0 0 200 200" className="w-full h-full overflow-visible drop-shadow-[0_25px_60px_rgba(0,0,0,0.7)]">
           <defs>
@@ -112,8 +111,8 @@ const PierreAvatar: React.FC<{
           </defs>
 
           <g className={isSpeaking || isListening ? 'animate-pulse-slow' : ''}>
-            {/* BOCA POSICIONADA NO TOPO ABSOLUTO (translate Y reduzido para elevar) */}
-            <g transform="translate(50, -65) scale(1.6)">
+            {/* BOCA NO TOPO ABSOLUTO (translate Y ainda mais reduzido) */}
+            <g transform="translate(50, -85) scale(1.6)">
               {/* Cavidade Oral Profunda */}
               {isSpeaking && (
                 <path d="M 25 65 Q 50 82 75 65 L 75 128 Q 50 138 25 128 Z" fill="url(#mouthInteriorDeep)" />
@@ -198,7 +197,7 @@ const App: React.FC = () => {
     }
   }, [transcripts]);
 
-  // Loop de detecção de volume para o lip-sync
+  // Detecção de volume para sincronia visual
   useEffect(() => {
     const detectVolume = () => {
       if (outputAnalyserRef.current) {
@@ -257,16 +256,16 @@ const App: React.FC = () => {
       const analyser = outCtx.createAnalyser();
       analyser.fftSize = 256;
       
-      // CORREÇÃO DE VOLUME PARA SMARTPHONES:
-      // Aumentado ganho significativamente (8.0x) e adicionado compressor dinâmico
+      // SUPER BOOST DE VOLUME PARA CELULARES:
+      // Aumentado ganho para 15.0 e ajustado compressor para evitar estouros mantendo a clareza
       const gainNode = outCtx.createGain();
-      gainNode.gain.value = 8.0; 
+      gainNode.gain.value = 15.0; 
       
       const compressor = outCtx.createDynamicsCompressor();
-      compressor.threshold.setValueAtTime(-24, outCtx.currentTime);
-      compressor.knee.setValueAtTime(30, outCtx.currentTime);
-      compressor.ratio.setValueAtTime(12, outCtx.currentTime);
-      compressor.attack.setValueAtTime(0.003, outCtx.currentTime);
+      compressor.threshold.setValueAtTime(-18, outCtx.currentTime);
+      compressor.knee.setValueAtTime(40, outCtx.currentTime);
+      compressor.ratio.setValueAtTime(20, outCtx.currentTime); // Ratio maior para "limitar" e manter volume alto
+      compressor.attack.setValueAtTime(0.005, outCtx.currentTime);
       compressor.release.setValueAtTime(0.25, outCtx.currentTime);
 
       gainNode.connect(compressor);
@@ -291,8 +290,7 @@ DIRETRIZES:
 1. Comece IMEDIATAMENTE após a conexão.
 2. Diga uma frase em francês, dê a tradução em português e peça para o aluno repetir.
 3. Avalie o áudio recebido e dê feedback construtivo.
-4. Mantenha uma atitude encorajadora e profissional.
-5. Se o aluno não falar nada por um tempo, encoraje-o gentilmente.`,
+4. Mantenha uma atitude encorajadora e profissional.`,
           outputAudioTranscription: {},
           inputAudioTranscription: {},
         },
@@ -308,7 +306,7 @@ DIRETRIZES:
               sessionPromise.then(session => session.sendRealtimeInput({ media: pcmBlob })).catch(() => {});
             };
             source.connect(scriptProcessor); scriptProcessor.connect(inCtx.destination);
-            sessionPromise.then(session => session.sendRealtimeInput({ text: "Bonjour Pierre! Estou pronto para praticar." }));
+            sessionPromise.then(session => session.sendRealtimeInput({ text: "Bonjour Pierre!" }));
           },
           onmessage: async (message) => {
             const parts = message.serverContent?.modelTurn?.parts;
@@ -365,7 +363,7 @@ DIRETRIZES:
             if (retryCountRef.current < MAX_RETRIES && !isRetryingRef.current) {
               isRetryingRef.current = true; retryCountRef.current++; stopSession(false);
               setTimeout(() => startSession(true), RETRY_DELAY_BASE);
-            } else if (!isRetryingRef.current) { setError('Conexão instável.'); stopSession(false); }
+            } else if (!isRetryingRef.current) { setError('Falha no áudio.'); stopSession(false); }
           },
           onclose: () => { if (!isRetryingRef.current && status === SessionStatus.CONNECTED) stopSession(); }
         }
@@ -373,7 +371,7 @@ DIRETRIZES:
       sessionRef.current = await sessionPromise;
     } catch (err: any) {
       if (retryCountRef.current < MAX_RETRIES) { retryCountRef.current++; setTimeout(() => startSession(true), RETRY_DELAY_BASE); }
-      else { setError('Falha ao conectar com o tutor.'); setStatus(SessionStatus.ERROR); }
+      else { setError('Falha ao iniciar tutor.'); setStatus(SessionStatus.ERROR); }
     }
   };
 
@@ -381,22 +379,18 @@ DIRETRIZES:
     <div className="min-h-screen flex flex-col bg-[#05060b] overflow-hidden font-sans text-white">
       <header className="bg-slate-900/40 backdrop-blur-2xl border-b border-white/10 px-6 py-3 flex items-center justify-between sticky top-0 z-50">
         <div className="flex items-center gap-3">
-          <div className="bg-blue-600 p-1.5 rounded-xl shadow-[0_0_20px_rgba(37,99,235,0.5)]">
+          <div className="bg-blue-600 p-1.5 rounded-xl">
             <Languages size={20} />
           </div>
-          <h1 className="text-xl font-black tracking-tight italic">Salut!<span className="text-blue-500 font-normal ml-1">Live</span></h1>
+          <h1 className="text-xl font-black italic">Salut!<span className="text-blue-500 font-normal ml-1">Live</span></h1>
         </div>
-        
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 px-4 py-2 bg-blue-500/10 text-blue-400 rounded-full text-[10px] font-black border border-blue-500/20 uppercase tracking-widest shadow-inner">
-            <Trophy size={14} /> XP: {progress.sessionsCompleted * 150}
-          </div>
+        <div className="flex items-center gap-2 px-4 py-2 bg-blue-500/10 text-blue-400 rounded-full text-[10px] font-black border border-blue-500/20 uppercase tracking-widest shadow-inner">
+          <Trophy size={14} /> XP: {progress.sessionsCompleted * 150}
         </div>
       </header>
 
       <main className="flex-1 max-w-5xl w-full mx-auto p-4 flex flex-col items-center justify-start gap-0 overflow-hidden relative">
-        
-        {/* BOCA POSICIONADA NO TOPO ABSOLUTO */}
+        {/* BOCA NO TOPO ABSOLUTO */}
         <div className="w-full flex justify-center pt-0 pb-0 mt-0 animate-in slide-in-from-top-20 duration-1000 z-10 relative">
           <PierreAvatar 
             isSpeaking={isSpeaking} 
@@ -407,17 +401,11 @@ DIRETRIZES:
         </div>
 
         {(status !== SessionStatus.IDLE || transcripts.length > 0) && (
-          <div className="w-full max-w-3xl flex flex-col gap-2 relative -mt-16 flex-1">
+          <div className="w-full max-w-3xl flex flex-col gap-2 relative -mt-24 flex-1">
             <div 
               ref={rollingContainerRef}
-              className="h-full max-h-[60vh] overflow-y-auto scrollbar-hide flex flex-col gap-6 px-6 py-10 mask-fade-edges relative z-10"
+              className="h-full max-h-[65vh] overflow-y-auto scrollbar-hide flex flex-col gap-6 px-6 py-10 mask-fade-edges relative z-10"
             >
-              {transcripts.length === 0 && status === SessionStatus.CONNECTED && (
-                <div className="flex flex-col items-center gap-4 mt-24">
-                   <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-ping"></div>
-                   <p className="text-center text-blue-500/40 italic font-bold tracking-widest text-xs uppercase">Pierre está te ouvindo...</p>
-                </div>
-              )}
               <div className="flex flex-col gap-6 pb-24">
                 {transcripts.map((item) => (
                   <div 
@@ -437,7 +425,7 @@ DIRETRIZES:
               {status === SessionStatus.CONNECTING && (
                 <div className="flex items-center gap-4 justify-center py-20 opacity-60">
                   <div className="w-4 h-4 bg-blue-500 rounded-full animate-bounce"></div>
-                  <p className="text-xs font-black uppercase tracking-[0.8em] text-blue-500 animate-pulse">Iniciando Pierre...</p>
+                  <p className="text-xs font-black uppercase tracking-[0.8em] text-blue-500 animate-pulse">Bonjour...</p>
                 </div>
               )}
             </div>
@@ -445,11 +433,11 @@ DIRETRIZES:
         )}
 
         {status === SessionStatus.IDLE && transcripts.length === 0 && (
-          <div className="flex flex-col items-center text-center gap-10 animate-in fade-in zoom-in-95 duration-1000 py-10 mt-10">
+          <div className="flex flex-col items-center text-center gap-10 animate-in fade-in zoom-in-95 duration-1000 py-10 mt-12">
              <div className="flex flex-col items-center gap-4">
-                <h2 className="text-4xl font-black tracking-tighter italic text-center">Fale francês fluentemente.</h2>
+                <h2 className="text-4xl font-black tracking-tighter italic text-center">Francês em Tempo Real.</h2>
                 <p className="text-slate-500 text-lg max-w-sm font-medium leading-relaxed">
-                  Pratique sua pronúncia e conversação em tempo real com Pierre.
+                  Pratique pronúncia e conversação com Pierre. Som otimizado para celulares.
                 </p>
              </div>
              <button
