@@ -17,7 +17,7 @@ const PierreAvatar: React.FC<{
 }> = ({ isSpeaking, isListening, status, voiceVolume = 0 }) => {
   const [mouthState, setMouthState] = useState(0);
 
-  // Sync mouth state to voice volume
+  // Sincronização da boca com o volume da voz
   useEffect(() => {
     if (isSpeaking) {
       if (voiceVolume < 0.05) setMouthState(0);
@@ -77,13 +77,10 @@ const PierreAvatar: React.FC<{
   ];
 
   return (
-    <div className="relative w-full max-w-sm h-64 mx-auto flex items-start justify-center overflow-visible">
-      <div className={`absolute top-0 left-1/2 -translate-x-1/2 w-80 h-80 rounded-full blur-[100px] opacity-20 transition-all duration-1000 ${
-        isSpeaking ? 'bg-blue-400' : isListening ? 'bg-emerald-400' : 'bg-slate-800'
-      }`} />
-      
-      <div className={`relative z-10 w-full h-full transition-all duration-700 ${isSpeaking ? 'scale-105' : 'scale-100'}`}>
-        <svg viewBox="0 0 200 200" className="w-full h-full overflow-visible drop-shadow-[0_25px_60px_rgba(0,0,0,0.5)]">
+    <div className="relative w-full max-w-sm h-48 mx-auto flex items-start justify-center overflow-visible">
+      {/* Glow de fundo removido (bola azul) como solicitado */}
+      <div className={`relative z-10 w-full h-full transition-all duration-700 ${isSpeaking ? 'scale-110' : 'scale-100'}`}>
+        <svg viewBox="0 0 200 200" className="w-full h-full overflow-visible drop-shadow-[0_25px_60px_rgba(0,0,0,0.7)]">
           <defs>
             <linearGradient id="lipGradientFine" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#fca5a5" />
@@ -115,32 +112,32 @@ const PierreAvatar: React.FC<{
           </defs>
 
           <g className={isSpeaking || isListening ? 'animate-pulse-slow' : ''}>
-            {/* ONLY MOUTH - 1.5x Larger, positioned high in the SVG (translate Y lowered significantly) */}
-            <g transform="translate(50, -25) scale(1.6)">
-              {/* Deep Oral Cavity */}
+            {/* BOCA POSICIONADA NO TOPO ABSOLUTO (translate Y reduzido para elevar) */}
+            <g transform="translate(50, -65) scale(1.6)">
+              {/* Cavidade Oral Profunda */}
               {isSpeaking && (
                 <path d="M 25 65 Q 50 82 75 65 L 75 128 Q 50 138 25 128 Z" fill="url(#mouthInteriorDeep)" />
               )}
               
-              {/* Dynamic Teeth */}
+              {/* Dentes Dinâmicos */}
               {isSpeaking && mouthConfigs[mouthState].teeth && (
                 <path d={mouthConfigs[mouthState].teeth} fill="url(#teethShaded)" stroke="rgba(0,0,0,0.12)" strokeWidth="0.5" />
               )}
               
-              {/* Dynamic Tongue */}
+              {/* Língua Dinâmica */}
               {isSpeaking && mouthConfigs[mouthState].tongue && (
                 <path d={mouthConfigs[mouthState].tongue} fill="#cc1e1e" opacity="0.95" />
               )}
               
-              {/* Upper Lip */}
+              {/* Lábio Superior */}
               <path d={mouthConfigs[mouthState].upper} fill="url(#lipGradientFine)" filter="url(#lipRealisticFilter)" className="transition-all duration-75 ease-out" />
               <path d={mouthConfigs[mouthState].upper} fill="url(#lipSpecular)" opacity="0.25" className="transition-all duration-75" />
               
-              {/* Lower Lip */}
+              {/* Lábio Inferior */}
               <path d={mouthConfigs[mouthState].lower} fill="url(#lipGradientFine)" filter="url(#lipRealisticFilter)" className="transition-all duration-75 ease-out" />
               <path d={mouthConfigs[mouthState].lower} fill="url(#lipSpecular)" opacity="0.38" className="transition-all duration-75" />
               
-              {/* Moisture Highlights */}
+              {/* Brilhos de Umidade */}
               {isSpeaking && (
                 <g opacity="0.55">
                    <path d="M 44 76 Q 50 78 56 76" stroke="white" strokeWidth="0.9" strokeLinecap="round" fill="none" />
@@ -201,7 +198,7 @@ const App: React.FC = () => {
     }
   }, [transcripts]);
 
-  // Audio volume detection loop for lip-syncing
+  // Loop de detecção de volume para o lip-sync
   useEffect(() => {
     const detectVolume = () => {
       if (outputAnalyserRef.current) {
@@ -259,13 +256,23 @@ const App: React.FC = () => {
       
       const analyser = outCtx.createAnalyser();
       analyser.fftSize = 256;
+      
+      // CORREÇÃO DE VOLUME PARA SMARTPHONES:
+      // Aumentado ganho significativamente (8.0x) e adicionado compressor dinâmico
       const gainNode = outCtx.createGain();
+      gainNode.gain.value = 8.0; 
       
-      // Increased volume boost for mobile devices (3.0x gain) to fix low volume
-      gainNode.gain.value = 3.0; 
-      
-      gainNode.connect(analyser);
+      const compressor = outCtx.createDynamicsCompressor();
+      compressor.threshold.setValueAtTime(-24, outCtx.currentTime);
+      compressor.knee.setValueAtTime(30, outCtx.currentTime);
+      compressor.ratio.setValueAtTime(12, outCtx.currentTime);
+      compressor.attack.setValueAtTime(0.003, outCtx.currentTime);
+      compressor.release.setValueAtTime(0.25, outCtx.currentTime);
+
+      gainNode.connect(compressor);
+      compressor.connect(analyser);
       analyser.connect(outCtx.destination);
+      
       outputGainRef.current = gainNode;
       outputAnalyserRef.current = analyser;
 
@@ -389,7 +396,8 @@ DIRETRIZES:
 
       <main className="flex-1 max-w-5xl w-full mx-auto p-4 flex flex-col items-center justify-start gap-0 overflow-hidden relative">
         
-        <div className="w-full flex justify-center py-0 animate-in slide-in-from-top-20 duration-1000 z-10">
+        {/* BOCA POSICIONADA NO TOPO ABSOLUTO */}
+        <div className="w-full flex justify-center pt-0 pb-0 mt-0 animate-in slide-in-from-top-20 duration-1000 z-10 relative">
           <PierreAvatar 
             isSpeaking={isSpeaking} 
             isListening={isListening} 
@@ -399,13 +407,13 @@ DIRETRIZES:
         </div>
 
         {(status !== SessionStatus.IDLE || transcripts.length > 0) && (
-          <div className="w-full max-w-3xl flex flex-col gap-2 relative -mt-4 flex-1">
+          <div className="w-full max-w-3xl flex flex-col gap-2 relative -mt-16 flex-1">
             <div 
               ref={rollingContainerRef}
-              className="h-full max-h-[55vh] overflow-y-auto scrollbar-hide flex flex-col gap-6 px-6 py-10 mask-fade-edges relative z-10"
+              className="h-full max-h-[60vh] overflow-y-auto scrollbar-hide flex flex-col gap-6 px-6 py-10 mask-fade-edges relative z-10"
             >
               {transcripts.length === 0 && status === SessionStatus.CONNECTED && (
-                <div className="flex flex-col items-center gap-4 mt-20">
+                <div className="flex flex-col items-center gap-4 mt-24">
                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-ping"></div>
                    <p className="text-center text-blue-500/40 italic font-bold tracking-widest text-xs uppercase">Pierre está te ouvindo...</p>
                 </div>
@@ -437,8 +445,8 @@ DIRETRIZES:
         )}
 
         {status === SessionStatus.IDLE && transcripts.length === 0 && (
-          <div className="flex flex-col items-center text-center gap-10 animate-in fade-in zoom-in-95 duration-1000 py-20">
-             <div className="flex flex-col items-center gap-4 mt-12">
+          <div className="flex flex-col items-center text-center gap-10 animate-in fade-in zoom-in-95 duration-1000 py-10 mt-10">
+             <div className="flex flex-col items-center gap-4">
                 <h2 className="text-4xl font-black tracking-tighter italic text-center">Fale francês fluentemente.</h2>
                 <p className="text-slate-500 text-lg max-w-sm font-medium leading-relaxed">
                   Pratique sua pronúncia e conversação em tempo real com Pierre.
